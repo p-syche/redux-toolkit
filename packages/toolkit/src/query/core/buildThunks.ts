@@ -8,7 +8,8 @@ import type {
 import { BaseQueryArg } from '../baseQueryTypes'
 import type { RootState, QueryKeys, QuerySubstateIdentifier } from './apiState'
 import { QueryStatus, CombinedState } from './apiState'
-import { isUpsertQuery, type StartQueryActionCreatorOptions } from './buildInitiate'
+import { forceQueryFnSymbol, isUpsertQuery } from './buildInitiate'
+import type { StartQueryActionCreatorOptions } from './buildInitiate'
 import type {
   AssertTagTypes,
   EndpointDefinition,
@@ -109,15 +110,19 @@ export interface QueryThunkArg
 }
 
 export interface MutationThunkArg {
+  type: 'mutation'
   originalArgs: unknown
   endpointName: string
   track?: boolean
+  fixedCacheKey?: string
 }
 
 export type ThunkResult = unknown
 
 export type ThunkApiMetaConfig = {
-  pendingMeta: { startedTimeStamp: number }
+  pendingMeta: {
+    startedTimeStamp: number
+  }
   fulfilledMeta: {
     fulfilledTimeStamp: number
     baseQueryMeta: unknown
@@ -254,27 +259,48 @@ export function buildThunks<
       return ret
     }
 
-  const executeEndpoint: AsyncThunkPayloadCreator<
+const executeEndpoint: AsyncThunkPayloadCreator<
     ThunkResult,
     QueryThunkArg | MutationThunkArg,
     ThunkApiMetaConfig & { state: RootState<any, string, ReducerPath> }
   > = async (
     arg,
-    { signal, rejectWithValue, fulfillWithValue, dispatch, getState, extra }
+    {
+      signal,
+      abort,
+      rejectWithValue,
+      fulfillWithValue,
+      dispatch,
+      getState,
+      extra,
+    }
   ) => {
     const endpointDefinition = endpointDefinitions[arg.endpointName]
 
     try {
-      let transformResponse: (baseQueryReturnValue: any, meta: any) => any =
-        defaultTransformResponse
+      let transformResponse: (
+        baseQueryReturnValue: any,
+        meta: any,
+        arg: any
+      ) => any = defaultTransformResponse
       let result: QueryReturnValue
       const baseQueryApi = {
         signal,
+        abort,
         dispatch,
         getState,
         extra,
+        endpoint: arg.endpointName,
+        type: arg.type,
+        forced:
+          arg.type === 'query' ? isForcedQuery(arg, getState()) : undefined,
       }
-      if (endpointDefinition.query) {
+
+      const forceQueryFn =
+        arg.type === 'query' ? arg[forceQueryFnSymbol] : undefined
+      if (forceQueryFn) {
+        result = forceQueryFn()
+      } else if (endpointDefinition.query) {
         result = await baseQuery(
           endpointDefinition.query(arg.originalArgs),
           baseQueryApi,
@@ -293,32 +319,89 @@ export function buildThunks<
             baseQuery(arg, baseQueryApi, endpointDefinition.extraOptions as any)
         )
       }
+      if (
+        typeof process !== 'undefined' &&
+        process.env.NODE_ENV === 'development'
+      ) {
+        const what = endpointDefinition.query ? '`baseQuery`' : '`queryFn`'
+        let err: undefined | string
+        if (!result) {
+          err = `${what} did not return anything.`
+        } else if (typeof result !== 'object') {
+          err = `${what} did not return an object.`
+        } else if (result.error && result.data) {
+          err = `${what} returned an object containing both \`error\` and \`result\`.`
+        } else if (result.error === undefined && result.data === undefined) {
+          err = `${what} returned an object containing neither a valid \`error\` and \`result\`. At least one of them should not be \`undefined\``
+        } else {
+          for (const key of Object.keys(result)) {
+            if (key !== 'error' && key !== 'data' && key !== 'meta') {
+              err = `The object returned by ${what} has the unknown property ${key}.`
+              break
+            }
+          }
+        }
+        if (err) {
+          console.error(
+            `Error encountered handling the endpoint ${arg.endpointName}.
+              ${err}
+              It needs to return an object with either the shape \`{ data: <value> }\` or \`{ error: <value> }\` that may contain an optional \`meta\` property.
+              Object returned was:`,
+            result
+          )
+        }
+      }
+
       if (result.error) throw new HandledError(result.error, result.meta)
 
       return fulfillWithValue(
-        await transformResponse(result.data, result.meta),
+        await transformResponse(result.data, result.meta, arg.originalArgs),
         {
           fulfilledTimeStamp: Date.now(),
           baseQueryMeta: result.meta,
         }
       )
     } catch (error) {
-      if (error instanceof HandledError) {
-        return rejectWithValue(error.value, { baseQueryMeta: error.meta })
+      let catchedError = error
+      if (catchedError instanceof HandledError) {
+        let transformErrorResponse: (
+          baseQueryReturnValue: any,
+          meta: any,
+          arg: any
+        ) => any = defaultTransformResponse
+
+        if (
+          endpointDefinition.query &&
+          endpointDefinition.transformErrorResponse
+        ) {
+          transformErrorResponse = endpointDefinition.transformErrorResponse
+        }
+        try {
+          return rejectWithValue(
+            await transformErrorResponse(
+              catchedError.value,
+              catchedError.meta,
+              arg.originalArgs
+            ),
+            { baseQueryMeta: catchedError.meta }
+          )
+        } catch (e) {
+          catchedError = e
+        }
       }
       if (
         typeof process !== 'undefined' &&
-        process.env.NODE_ENV === 'development'
+        process.env.NODE_ENV !== 'production'
       ) {
         console.error(
-          `An unhandled error occured processing a request for the endpoint "${arg.endpointName}".
+          `An unhandled error occurred processing a request for the endpoint "${arg.endpointName}".
 In the case of an unhandled error, no tags will be "provided" or "invalidated".`,
-          error
+          catchedError
         )
       } else {
-        console.error(error)
+        console.error(catchedError)
       }
-      throw error
+      throw catchedError
     }
   }
 
@@ -354,7 +437,7 @@ In the case of an unhandled error, no tags will be "provided" or "invalidated".`
     },
     condition(queryThunkArgs, { getState }) {
       const state = getState()
-
+      console.log('patched package')
       const requestState =
         state[reducerPath]?.queries?.[queryThunkArgs.queryCacheKey]
       const fulfilledVal = requestState?.fulfilledTimeStamp

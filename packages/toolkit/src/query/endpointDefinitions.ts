@@ -55,13 +55,22 @@ interface EndpointDefinitionWithQuery<
    */
   query(arg: QueryArg): BaseQueryArg<BaseQuery>
   queryFn?: never
-  /**
+   /**
    * A function to manipulate the data returned by a query or mutation.
    */
   transformResponse?(
     baseQueryReturnValue: BaseQueryResult<BaseQuery>,
-    meta: BaseQueryMeta<BaseQuery>
+    meta: BaseQueryMeta<BaseQuery>,
+    arg: QueryArg
   ): ResultType | Promise<ResultType>
+  /**
+   * A function to manipulate the data returned by a failed query or mutation.
+   */
+  transformErrorResponse?(
+    baseQueryReturnValue: BaseQueryError<BaseQuery>,
+    meta: BaseQueryMeta<BaseQuery>,
+    arg: QueryArg
+  ): unknown
 }
 
 interface EndpointDefinitionWithQueryFn<

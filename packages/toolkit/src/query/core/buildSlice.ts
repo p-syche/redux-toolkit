@@ -289,14 +289,16 @@ export function buildSlice({
         }
       },
       unsubscribeQueryResult(
-        draft,
-        {
-          payload: { queryCacheKey, requestId },
-        }: PayloadAction<{ requestId: string } & QuerySubstateIdentifier>
+        d,
+        a: PayloadAction<{ requestId: string } & QuerySubstateIdentifier>
       ) {
-        if (draft[queryCacheKey]) {
-          delete draft[queryCacheKey]![requestId]
-        }
+        // Dummy
+      },
+      internal_probeSubscription(
+        d,
+        a: PayloadAction<{ queryCacheKey: string; requestId: string }>
+      ) {
+        // dummy
       },
     },
     extraReducers: (builder) => {
