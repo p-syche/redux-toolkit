@@ -8,7 +8,7 @@ import type {
 import { BaseQueryArg } from '../baseQueryTypes'
 import type { RootState, QueryKeys, QuerySubstateIdentifier } from './apiState'
 import { QueryStatus, CombinedState } from './apiState'
-import type { StartQueryActionCreatorOptions } from './buildInitiate'
+import { isUpsertQuery, type StartQueryActionCreatorOptions } from './buildInitiate'
 import type {
   AssertTagTypes,
   EndpointDefinition,
@@ -18,7 +18,7 @@ import type {
   QueryDefinition,
   ResultTypeFrom,
 } from '../endpointDefinitions'
-import { calculateProvidedBy, FullTagDescription } from '../endpointDefinitions'
+import { calculateProvidedBy, FullTagDescription, isQueryDefinition } from '../endpointDefinitions'
 import type { AsyncThunkPayloadCreator, Draft } from '@reduxjs/toolkit'
 import {
   isAllOf,
@@ -103,6 +103,7 @@ export interface Matchers<
 export interface QueryThunkArg
   extends QuerySubstateIdentifier,
     StartQueryActionCreatorOptions {
+  type: 'query'
   originalArgs: unknown
   endpointName: string
 }
@@ -321,6 +322,28 @@ In the case of an unhandled error, no tags will be "provided" or "invalidated".`
     }
   }
 
+  function isForcedQuery(
+    arg: QueryThunkArg,
+    state: RootState<any, string, ReducerPath>
+  ) {
+    const requestState = state[reducerPath]?.queries?.[arg.queryCacheKey]
+    const baseFetchOnMountOrArgChange =
+      state[reducerPath]?.config.refetchOnMountOrArgChange
+
+    const fulfilledVal = requestState?.fulfilledTimeStamp
+    const refetchVal =
+      arg.forceRefetch ?? (arg.subscribe && baseFetchOnMountOrArgChange)
+
+    if (refetchVal) {
+      // Return if its true or compare the dates because it must be a number
+      return (
+        refetchVal === true ||
+        (Number(new Date()) - Number(fulfilledVal)) / 1000 >= refetchVal
+      )
+    }
+    return false
+  }
+
   const queryThunk = createAsyncThunk<
     ThunkResult,
     QueryThunkArg,
@@ -329,27 +352,48 @@ In the case of an unhandled error, no tags will be "provided" or "invalidated".`
     getPendingMeta() {
       return { startedTimeStamp: Date.now() }
     },
-    condition(arg, { getState }) {
-      const state = getState()[reducerPath]
-      const requestState = state?.queries?.[arg.queryCacheKey]
-      const baseFetchOnMountOrArgChange = state.config.refetchOnMountOrArgChange
+    condition(queryThunkArgs, { getState }) {
+      const state = getState()
 
+      const requestState =
+        state[reducerPath]?.queries?.[queryThunkArgs.queryCacheKey]
       const fulfilledVal = requestState?.fulfilledTimeStamp
-      const refetchVal =
-        arg.forceRefetch ?? (arg.subscribe && baseFetchOnMountOrArgChange)
+      const currentArg = queryThunkArgs.originalArgs
+      const previousArg = requestState?.originalArgs
+      const endpointDefinition =
+        endpointDefinitions[queryThunkArgs.endpointName]
+
+      // Order of these checks matters.
+      // In order for `upsertQueryData` to successfully run while an existing request is in flight,
+      /// we have to check for that first, otherwise `queryThunk` will bail out and not run at all.
+      if (isUpsertQuery(queryThunkArgs)) {
+        return true
+      }
 
       // Don't retry a request that's currently in-flight
-      if (requestState?.status === 'pending') return false
+      if (requestState?.status === 'pending') {
+        return false
+      }
+
+      // if this is forced, continue
+      if (isForcedQuery(queryThunkArgs, state)) {
+        return true
+      }
+
+      if (
+        isQueryDefinition(endpointDefinition) &&
+        endpointDefinition?.forceRefetch?.({
+          currentArg,
+          previousArg,
+          endpointState: requestState,
+          state,
+        })
+      ) {
+        return true
+      }
 
       // Pull from the cache unless we explicitly force refetch or qualify based on time
       if (fulfilledVal) {
-        if (refetchVal) {
-          // Return if its true or compare the dates because it must be a number
-          return (
-            refetchVal === true ||
-            (Number(new Date()) - Number(fulfilledVal)) / 1000 >= refetchVal
-          )
-        }
         // Value is cached and we didn't specify to refresh, skip it.
         return false
       }

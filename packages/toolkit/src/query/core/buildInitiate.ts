@@ -22,7 +22,7 @@ import type { QuerySubState, SubscriptionOptions, RootState } from './apiState'
 import type { InternalSerializeQueryArgs } from '../defaultSerializeQueryArgs'
 import type { Api } from '../apiTypes'
 import type { ApiEndpointQuery } from './module'
-import type { BaseQueryError } from '../baseQueryTypes'
+import type { BaseQueryError, QueryReturnValue } from '../baseQueryTypes'
 
 declare module './module' {
   export interface ApiEndpointQuery<
@@ -42,10 +42,15 @@ declare module './module' {
   }
 }
 
+export const forceQueryFnSymbol = Symbol('forceQueryFn')
+export const isUpsertQuery = (arg: QueryThunkArg) =>
+  typeof arg[forceQueryFnSymbol] === 'function'
+
 export interface StartQueryActionCreatorOptions {
   subscribe?: boolean
   forceRefetch?: boolean | number
   subscriptionOptions?: SubscriptionOptions
+  [forceQueryFnSymbol]?: () => QueryReturnValue
 }
 
 type StartQueryActionCreator<

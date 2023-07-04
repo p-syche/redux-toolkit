@@ -1,5 +1,5 @@
 import type { AnyAction, ThunkDispatch } from '@reduxjs/toolkit'
-import type { RootState } from './core/apiState'
+import type { QuerySubState, RootState } from './core/apiState'
 import type {
   BaseQueryExtraOptions,
   BaseQueryFn,
@@ -241,6 +241,53 @@ export interface QueryExtraOptions<
    * Not to be used. A query should not invalidate tags in the cache.
    */
   invalidatesTags?: never
+
+    /**
+   * Check to see if the endpoint should force a refetch in cases where it normally wouldn't.
+   * This is primarily useful for "infinite scroll" / pagination use cases where
+   * RTKQ is keeping a single cache entry that is added to over time, in combination
+   * with `serializeQueryArgs` returning a fixed cache key and a `merge` callback
+   * set to add incoming data to the cache entry each time.
+   *
+   * @example
+   *
+   * ```ts
+   * // codeblock-meta title="forceRefresh: pagination"
+   *
+   * import { createApi, fetchBaseQuery, defaultSerializeQueryArgs } from '@reduxjs/toolkit/query/react'
+   * interface Post {
+   *   id: number
+   *   name: string
+   * }
+   *
+   * createApi({
+   *  baseQuery: fetchBaseQuery({ baseUrl: '/' }),
+   *  endpoints: (build) => ({
+   *    listItems: build.query<string[], number>({
+   *      query: (pageNumber) => `/listItems?page=${pageNumber}`,
+   *     // Only have one cache entry because the arg always maps to one string
+   *     serializeQueryArgs: ({ endpointName }) => {
+   *       return endpointName
+   *      },
+   *      // Always merge incoming data to the cache entry
+   *      merge: (currentCache, newItems) => {
+   *        currentCache.push(...newItems)
+   *      },
+   *      // Refetch when the page arg changes
+   *      forceRefetch({ currentArg, previousArg }) {
+   *        return currentArg !== previousArg
+   *      },
+   *    }),
+   *  }),
+   *})
+   * ```
+   */
+   forceRefetch?(params: {
+    currentArg: QueryArg | undefined
+    previousArg: QueryArg | undefined
+    state: RootState<any, any, string>
+    endpointState?: QuerySubState<any>
+  }): boolean
 }
 
 export type QueryDefinition<
