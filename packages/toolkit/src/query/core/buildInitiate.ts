@@ -88,6 +88,7 @@ type StartMutationActionCreator<
      * (defaults to `true`)
      */
     track?: boolean
+    fixedCacheKey?: string
   }
 ) => ThunkAction<MutationActionCreatorResult<D>, any, any, AnyAction>
 
@@ -363,14 +364,14 @@ You must add the middleware for RTK-Query to function correctly!`
     endpointName: string,
     definition: MutationDefinition<any, any, any, any>
   ): StartMutationActionCreator<any> {
-    return (arg, { track = true } = {}) =>
+    return (arg, { track = true, fixedCacheKey } = {}) =>
       (dispatch, getState) => {
         const thunk = mutationThunk({
           type: 'mutation',
           endpointName,
           originalArgs: arg,
           track,
-          // fixedCacheKey,
+          fixedCacheKey,
         })
         const thunkResult = dispatch(thunk)
         middlewareWarning(getState)

@@ -30,11 +30,12 @@ interface EndpointDefinitionWithQuery<
   ResultType
 > {
   /**
-   * Can be used in place of `query` as an inline function that bypasses `baseQuery` completely for the endpoint.
+   * `query` can be a function that returns either a `string` or an `object` which is passed to your `baseQuery`. If you are using [fetchBaseQuery](./fetchBaseQuery), this can return either a `string` or an `object` of properties in `FetchArgs`. If you use your own custom [`baseQuery`](../../rtk-query/usage/customizing-queries), you can customize this behavior to your liking.
    *
    * @example
+   *
    * ```ts
-   * // codeblock-meta title="Basic queryFn example"
+   * // codeblock-meta title="query example"
    *
    * import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react'
    * interface Post {
@@ -45,36 +46,30 @@ interface EndpointDefinitionWithQuery<
    *
    * const api = createApi({
    *   baseQuery: fetchBaseQuery({ baseUrl: '/' }),
+   *   tagTypes: ['Post'],
    *   endpoints: (build) => ({
    *     getPosts: build.query<PostsResponse, void>({
-   *       query: () => 'posts',
-   *     }),
-   *     flipCoin: build.query<'heads' | 'tails', void>({
    *       // highlight-start
-   *       queryFn(arg, queryApi, extraOptions, baseQuery) {
-   *         const randomVal = Math.random()
-   *         if (randomVal < 0.45) {
-   *           return { data: 'heads' }
-   *         }
-   *         if (randomVal < 0.9) {
-   *           return { data: 'tails' }
-   *         }
-   *         return { error: { status: 500, statusText: 'Internal Server Error', data: "Coin landed on it's edge!" } }
-   *       }
+   *       query: () => 'posts',
    *       // highlight-end
-   *     })
+   *     }),
+   *     addPost: build.mutation<Post, Partial<Post>>({
+   *      // highlight-start
+   *      query: (body) => ({
+   *        url: `posts`,
+   *        method: 'POST',
+   *        body,
+   *      }),
+   *      // highlight-end
+   *      invalidatesTags: [{ type: 'Post', id: 'LIST' }],
+   *    }),
    *   })
    * })
    * ```
    */
-  queryFn(
-    arg: QueryArg,
-    api: BaseQueryApi,
-    extraOptions: BaseQueryExtraOptions<BaseQuery>,
-    baseQuery: (arg: Parameters<BaseQuery>[0]) => ReturnType<BaseQuery>
-  ): MaybePromise<QueryReturnValue<ResultType, BaseQueryError<BaseQuery>>>
-  query?: never
-   /**
+  query(arg: QueryArg): BaseQueryArg<BaseQuery>
+  queryFn?: never
+  /**
    * A function to manipulate the data returned by a query or mutation.
    */
   transformResponse?(
@@ -90,6 +85,19 @@ interface EndpointDefinitionWithQuery<
     meta: BaseQueryMeta<BaseQuery>,
     arg: QueryArg
   ): unknown
+  /**
+   * Defaults to `true`.
+   *
+   * Most apps should leave this setting on. The only time it can be a performance issue
+   * is if an API returns extremely large amounts of data (e.g. 10,000 rows per request) and
+   * you're unable to paginate it.
+   *
+   * For details of how this works, please see the below. When it is set to `false`,
+   * every request will cause subscribed components to rerender, even when the data has not changed.
+   *
+   * @see https://redux-toolkit.js.org/api/other-exports#copywithstructuralsharing
+   */
+  structuralSharing?: boolean
 }
 
 interface EndpointDefinitionWithQueryFn<
@@ -144,6 +152,19 @@ interface EndpointDefinitionWithQueryFn<
   query?: never
   transformResponse?: never
   transformErrorResponse?: never
+  /**
+   * Defaults to `true`.
+   *
+   * Most apps should leave this setting on. The only time it can be a performance issue
+   * is if an API returns extremely large amounts of data (e.g. 10,000 rows per request) and
+   * you're unable to paginate it.
+   *
+   * For details of how this works, please see the below. When it is set to `false`,
+   * every request will cause subscribed components to rerender, even when the data has not changed.
+   *
+   * @see https://redux-toolkit.js.org/api/other-exports#copywithstructuralsharing
+   */
+  structuralSharing?: boolean
 }
 
 export type BaseEndpointDefinition<
