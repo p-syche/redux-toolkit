@@ -146,7 +146,7 @@ export const reactHooksModule = ({
         useStore,
         unstable__sideEffectsInRender,
       },
-      // serializeQueryArgs,
+      serializeQueryArgs,
       context,
     })
     safeAssign(anyApi, { usePrefetch })

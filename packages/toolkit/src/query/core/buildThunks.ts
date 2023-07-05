@@ -9,7 +9,7 @@ import { BaseQueryArg } from '../baseQueryTypes'
 import type { RootState, QueryKeys, QuerySubstateIdentifier } from './apiState'
 import { QueryStatus, CombinedState } from './apiState'
 import { forceQueryFnSymbol, isUpsertQuery } from './buildInitiate'
-import type { StartQueryActionCreatorOptions } from './buildInitiate'
+import type { QueryActionCreatorResult, StartQueryActionCreatorOptions } from './buildInitiate'
 import type {
   AssertTagTypes,
   EndpointDefinition,
@@ -167,6 +167,24 @@ export type UpdateQueryDataThunk<
   updateRecipe: Recipe<ResultTypeFrom<Definitions[EndpointName]>>
 ) => ThunkAction<PatchCollection, PartialState, any, AnyAction>
 
+export type UpsertQueryDataThunk<
+  Definitions extends EndpointDefinitions,
+  PartialState
+> = <EndpointName extends QueryKeys<Definitions>>(
+  endpointName: EndpointName,
+  args: QueryArgFrom<Definitions[EndpointName]>,
+  value: ResultTypeFrom<Definitions[EndpointName]>
+) => ThunkAction<
+  QueryActionCreatorResult<
+    Definitions[EndpointName] extends QueryDefinition<any, any, any, any>
+      ? Definitions[EndpointName]
+      : never
+  >,
+  PartialState,
+  any,
+  AnyAction
+>
+
 /**
  * An object returned from dispatching a `api.util.updateQueryData` call.
  */
@@ -257,6 +275,24 @@ export function buildThunks<
       dispatch(api.util.patchQueryData(endpointName, args, ret.patches))
 
       return ret
+    }
+
+  const upsertQueryData: UpsertQueryDataThunk<Definitions, State> =
+    (endpointName, args, value) => (dispatch) => {
+      return dispatch(
+        (
+          api.endpoints[endpointName] as ApiEndpointQuery<
+            QueryDefinition<any, any, any, any, any>,
+            Definitions
+          >
+        ).initiate(args, {
+          subscribe: false,
+          forceRefetch: true,
+          [forceQueryFnSymbol]: () => ({
+            data: value,
+          }),
+        })
+      )
     }
 
 const executeEndpoint: AsyncThunkPayloadCreator<
@@ -566,6 +602,7 @@ In the case of an unhandled error, no tags will be "provided" or "invalidated".`
     mutationThunk,
     prefetch,
     updateQueryData,
+    upsertQueryData,
     patchQueryData,
     buildMatchThunkActions,
   }

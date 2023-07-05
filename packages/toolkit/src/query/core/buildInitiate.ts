@@ -20,7 +20,7 @@ import type {
 import { unwrapResult } from '@reduxjs/toolkit'
 import type { QuerySubState, SubscriptionOptions, RootState } from './apiState'
 import type { InternalSerializeQueryArgs } from '../defaultSerializeQueryArgs'
-import type { Api } from '../apiTypes'
+import type { Api, ApiContext } from '../apiTypes'
 import type { ApiEndpointQuery } from './module'
 import type { BaseQueryError, QueryReturnValue } from '../baseQueryTypes'
 import type { Dispatch } from 'redux'
@@ -194,12 +194,14 @@ export function buildInitiate({
   queryThunk,
   mutationThunk,
   api,
+  context,
 }: {
   serializeQueryArgs: InternalSerializeQueryArgs
   queryThunk: QueryThunk
   mutationThunk: MutationThunk
   api: Api<any, EndpointDefinitions, any, any>
-  }) {
+  context: ApiContext<EndpointDefinitions>
+}) {
   
   const runningQueries: Map<
     Dispatch,
@@ -257,7 +259,7 @@ You must add the middleware for RTK-Query to function correctly!`
           queryArgs: arg,
           endpointDefinition,
           endpointName,
-        })
+        });
 
         const thunk = queryThunk({
           type: 'query',
