@@ -441,6 +441,7 @@ export const coreModule = (): Module<CoreModule> => ({
       mutationThunk,
       api,
       serializeQueryArgs: serializeQueryArgs as any,
+      context,
     })
 
     return {

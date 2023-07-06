@@ -12,6 +12,7 @@ import {
   Reducer,
   ActionCreatorWithPayload,
   ActionCreatorWithoutPayload,
+  createNextState,
 } from '@reduxjs/toolkit'
 import type {
   CombinedState as CombinedQueryState,
@@ -39,9 +40,10 @@ import { calculateProvidedByThunk } from './buildThunks'
 import type {
   AssertTagTypes,
   EndpointDefinitions,
+  QueryDefinition,
 } from '../endpointDefinitions'
 import type { Patch } from 'immer'
-import { applyPatches } from 'immer'
+import { applyPatches, original } from 'immer'
 import { onFocus, onFocusLost, onOffline, onOnline } from './setupListeners'
 import {
   isDocumentVisible,
@@ -49,6 +51,8 @@ import {
   copyWithStructuralSharing,
 } from '../utils'
 import type { ApiContext } from '../apiTypes'
+import { isUpsertQuery } from './buildInitiate'
+import { isDraft } from 'immer'
 
 function updateQuerySubstateIfExists(
   state: QueryState<any>,
@@ -139,9 +143,54 @@ export function buildSlice({
             draft,
             meta.arg.queryCacheKey,
             (substate) => {
-              if (substate.requestId !== meta.requestId) return
+              if (
+                substate.requestId !== meta.requestId &&
+                !isUpsertQuery(meta.arg)
+              )
+                return
+              const { merge } = definitions[
+                meta.arg.endpointName
+              ] as QueryDefinition<any, any, any, any>
               substate.status = QueryStatus.fulfilled
-              substate.data = copyWithStructuralSharing(substate.data, payload)
+
+              if (merge) {
+                if (substate.data !== undefined) {
+                  const { fulfilledTimeStamp, arg, baseQueryMeta, requestId } =
+                    meta
+                  // There's existing cache data. Let the user merge it in themselves.
+                  // We're already inside an Immer-powered reducer, and the user could just mutate `substate.data`
+                  // themselves inside of `merge()`. But, they might also want to return a new value.
+                  // Try to let Immer figure that part out, save the result, and assign it to `substate.data`.
+                  let newData = createNextState(
+                    substate.data,
+                    (draftSubstateData) => {
+                      // As usual with Immer, you can mutate _or_ return inside here, but not both
+                      return merge(draftSubstateData, payload, {
+                        arg: arg.originalArgs,
+                        baseQueryMeta,
+                        fulfilledTimeStamp,
+                        requestId,
+                      })
+                    }
+                  )
+                  substate.data = newData
+                } else {
+                  // Presumably a fresh request. Just cache the response data.
+                  substate.data = payload
+                }
+              } else {
+                // Assign or safely update the cache data.
+                substate.data =
+                  definitions[meta.arg.endpointName].structuralSharing ?? true
+                    ? copyWithStructuralSharing(
+                        isDraft(substate.data)
+                          ? original(substate.data)
+                          : substate.data,
+                        payload
+                      )
+                    : payload
+              }
+
               delete substate.error
               substate.fulfilledTimeStamp = meta.fulfilledTimeStamp
             }
@@ -289,14 +338,16 @@ export function buildSlice({
         }
       },
       unsubscribeQueryResult(
-        draft,
-        {
-          payload: { queryCacheKey, requestId },
-        }: PayloadAction<{ requestId: string } & QuerySubstateIdentifier>
+        d,
+        a: PayloadAction<{ requestId: string } & QuerySubstateIdentifier>
       ) {
-        if (draft[queryCacheKey]) {
-          delete draft[queryCacheKey]![requestId]
-        }
+        // Dummy
+      },
+      internal_probeSubscription(
+        d,
+        a: PayloadAction<{ queryCacheKey: string; requestId: string }>
+      ) {
+        // dummy
       },
     },
     extraReducers: (builder) => {

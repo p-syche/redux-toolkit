@@ -3,8 +3,9 @@ import type {
   EndpointBuilder,
   EndpointDefinition,
   ReplaceTagTypes,
+  UpdateDefinitions,
 } from './endpointDefinitions'
-import type { UnionToIntersection, NoInfer } from './tsHelpers'
+import type { UnionToIntersection, NoInfer, WithRequiredProp } from './tsHelpers'
 import type { CoreModule } from './core/module'
 import type { CreateApiOptions } from './createApi'
 import type { BaseQueryFn } from './baseQueryTypes'
@@ -31,9 +32,16 @@ export type Module<Name extends ModuleName> = {
     TagTypes extends string
   >(
     api: Api<BaseQuery, EndpointDefinitions, ReducerPath, TagTypes, ModuleName>,
-    options: Required<
-      CreateApiOptions<BaseQuery, Definitions, ReducerPath, TagTypes>
-    >,
+    options: WithRequiredProp<
+    CreateApiOptions<BaseQuery, Definitions, ReducerPath, TagTypes>,
+    | 'reducerPath'
+    | 'serializeQueryArgs'
+    | 'keepUnusedDataFor'
+    | 'refetchOnMountOrArgChange'
+    | 'refetchOnFocus'
+    | 'refetchOnReconnect'
+    | 'tagTypes'
+  >,
     context: ApiContext<Definitions>
   ): {
     injectEndpoint(
@@ -76,23 +84,27 @@ export type Api<
   /**
    *A function to enhance a generated API with additional information. Useful with code-generation.
    */
-  enhanceEndpoints<NewTagTypes extends string = never>(_: {
-    addTagTypes?: readonly NewTagTypes[]
-    endpoints?: ReplaceTagTypes<
-      Definitions,
-      TagTypes | NoInfer<NewTagTypes>
-    > extends infer NewDefinitions
-      ? {
-          [K in keyof NewDefinitions]?:
-            | Partial<NewDefinitions[K]>
-            | ((definition: NewDefinitions[K]) => void)
-        }
-      : never
-  }): Api<
-    BaseQuery,
-    ReplaceTagTypes<Definitions, TagTypes | NewTagTypes>,
-    ReducerPath,
-    TagTypes | NewTagTypes,
-    Enhancers
-  >
+  enhanceEndpoints<
+    NewTagTypes extends string = never,
+    NewDefinitions extends EndpointDefinitions = never
+  >(_: {
+   addTagTypes?: readonly NewTagTypes[]
+   endpoints?: UpdateDefinitions<
+     Definitions,
+     TagTypes | NoInfer<NewTagTypes>,
+     NewDefinitions
+   > extends infer NewDefinitions
+     ? {
+         [K in keyof NewDefinitions]?:
+           | Partial<NewDefinitions[K]>
+           | ((definition: NewDefinitions[K]) => void)
+       }
+     : never
+ }): Api<
+   BaseQuery,
+   UpdateDefinitions<Definitions, TagTypes | NewTagTypes, NewDefinitions>,
+   ReducerPath,
+   TagTypes | NewTagTypes,
+   Enhancers
+ >
 }

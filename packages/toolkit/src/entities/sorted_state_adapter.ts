@@ -139,6 +139,10 @@ export function createSortedStateAdapter<T>(
       state.entities[selectId(model)] = model
     })
 
+    resortEntities(state)
+  }
+
+  function resortEntities(state: R) {
     const allEntities = Object.values(state.entities) as T[]
     allEntities.sort(sort)
 

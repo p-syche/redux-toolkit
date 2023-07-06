@@ -32,7 +32,7 @@ import type {
   MutationActionCreatorResult,
 } from '@reduxjs/toolkit/dist/query/core/buildInitiate'
 import { shallowEqual } from 'react-redux'
-import type { Api } from '@reduxjs/toolkit/dist/query/apiTypes'
+import type { Api, ApiContext } from '@reduxjs/toolkit/dist/query/apiTypes'
 import type {
   Id,
   NoInfer,
@@ -48,6 +48,10 @@ import type { ReactHooksModuleOptions } from './module'
 import { useShallowStableValue } from './useShallowStableValue'
 import type { UninitializedValue } from './constants'
 import { UNINITIALIZED_VALUE } from './constants'
+import { useStableQueryArgs } from './useSerializedStableValue'
+import { defaultSerializeQueryArgs } from '../defaultSerializeQueryArgs'
+import type { SerializeQueryArgs } from '../defaultSerializeQueryArgs'
+import type { DependencyList } from 'react'
 
 // Copy-pasted from React-Redux
 export const useIsomorphicLayoutEffect =
@@ -158,7 +162,11 @@ export type UseQuerySubscription<
 > = (
   arg: QueryArgFrom<D> | SkipToken,
   options?: UseQuerySubscriptionOptions
-) => Pick<QueryActionCreatorResult<D>, 'refetch'>
+) => UseQuerySubscriptionResult<D>
+
+export type UseQuerySubscriptionResult<
+  D extends QueryDefinition<any, any, any, any>
+> = Pick<QueryActionCreatorResult<D>, 'refetch'>
 
 export type UseLazyQueryLastPromiseInfo<
   D extends QueryDefinition<any, any, any, any>
@@ -414,32 +422,6 @@ export type UseMutation<D extends MutationDefinition<any, any, any, any>> = <
 const defaultQueryStateSelector: QueryStateSelector<any, any> = (x) => x
 const defaultMutationStateSelector: MutationStateSelector<any, any> = (x) => x
 
-const queryStatePreSelector = (
-  currentState: QueryResultSelectorResult<any>,
-  lastResult: UseQueryStateDefaultResult<any>
-): UseQueryStateDefaultResult<any> => {
-  // data is the last known good request result we have tracked - or if none has been tracked yet the last good result for the current args
-  let data = currentState.isSuccess ? currentState.data : lastResult?.data
-  if (data === undefined) data = currentState.data
-
-  const hasData = data !== undefined
-
-  // isFetching = true any time a request is in flight
-  const isFetching = currentState.isLoading
-  // isLoading = true only when loading while no data is present yet (initial load with no data in the cache)
-  const isLoading = !hasData && isFetching
-  // isSuccess = true when data is present
-  const isSuccess = currentState.isSuccess || (isFetching && hasData)
-
-  return {
-    ...currentState,
-    data,
-    isFetching,
-    isLoading,
-    isSuccess,
-  } as UseQueryStateDefaultResult<any>
-}
-
 /**
  * Wrapper around `defaultQueryStateSelector` to be used in `useQuery`.
  * We want the initial render to already come back with
@@ -477,12 +459,75 @@ type GenericPrefetchThunk = (
  */
 export function buildHooks<Definitions extends EndpointDefinitions>({
   api,
-  moduleOptions: { batch, useDispatch, useSelector, useStore },
+  moduleOptions: {
+    batch,
+    useDispatch,
+    useSelector,
+    useStore,
+    unstable__sideEffectsInRender
+  },
+  serializeQueryArgs,
+  context,
 }: {
   api: Api<any, Definitions, any, any, CoreModule>
   moduleOptions: Required<ReactHooksModuleOptions>
-}) {
+  serializeQueryArgs: SerializeQueryArgs<any>
+  context: ApiContext<Definitions>
+  }) {
+    const usePossiblyImmediateEffect: (
+      effect: () => void | undefined,
+      deps?: DependencyList
+    ) => void = unstable__sideEffectsInRender ? (cb) => cb() : useEffect
+  
   return { buildQueryHooks, buildMutationHook, usePrefetch }
+
+  function queryStatePreSelector(
+    currentState: QueryResultSelectorResult<any>,
+    lastResult: UseQueryStateDefaultResult<any> | undefined,
+    queryArgs: any
+  ): UseQueryStateDefaultResult<any> {
+    // if we had a last result and the current result is uninitialized,
+    // we might have called `api.util.resetApiState`
+    // in this case, reset the hook
+    if (lastResult?.endpointName && currentState.isUninitialized) {
+      const { endpointName } = lastResult
+      const endpointDefinition = context.endpointDefinitions[endpointName]
+      if (
+        serializeQueryArgs({
+          queryArgs: lastResult.originalArgs,
+          endpointDefinition,
+          endpointName,
+        }) ===
+        serializeQueryArgs({
+          queryArgs,
+          endpointDefinition,
+          endpointName,
+        })
+      )
+        lastResult = undefined
+    }
+    
+    // data is the last known good request result we have tracked - or if none has been tracked yet the last good result for the current args
+    let data = currentState.isSuccess ? currentState.data : lastResult?.data
+    if (data === undefined) data = currentState.data
+  
+    const hasData = data !== undefined
+  
+    // isFetching = true any time a request is in flight
+    const isFetching = currentState.isLoading
+    // isLoading = true only when loading while no data is present yet (initial load with no data in the cache)
+    const isLoading = !hasData && isFetching
+    // isSuccess = true when data is present
+    const isSuccess = currentState.isSuccess || (isFetching && hasData)
+  
+    return {
+      ...currentState,
+      data,
+      isFetching,
+      isLoading,
+      isSuccess,
+    } as UseQueryStateDefaultResult<any>
+  }
 
   function usePrefetch<EndpointName extends QueryKeys<Definitions>>(
     endpointName: EndpointName,
@@ -519,17 +564,75 @@ export function buildHooks<Definitions extends EndpointDefinitions>({
         Definitions
       >
       const dispatch = useDispatch<ThunkDispatch<any, any, AnyAction>>()
-      const stableArg = useShallowStableValue(skip ? skipToken : arg)
+      const stableArg = useStableQueryArgs(
+        skip ? skipToken : arg,
+        // Even if the user provided a per-endpoint `serializeQueryArgs` with
+        // a consistent return value, _here_ we want to use the default behavior
+        // so we can tell if _anything_ actually changed. Otherwise, we can end up
+        // with a case where the query args did change but the serialization doesn't,
+        // and then we never try to initiate a refetch.
+        defaultSerializeQueryArgs,
+        context.endpointDefinitions[name],
+        name
+      )
       const stableSubscriptionOptions = useShallowStableValue({
         refetchOnReconnect,
         refetchOnFocus,
         pollingInterval,
       })
 
+      const lastRenderHadSubscription = useRef(false)
+
       const promiseRef = useRef<QueryActionCreatorResult<any>>()
 
-      useEffect(() => {
+      let { queryCacheKey, requestId } = promiseRef.current || {}
+
+      // HACK Because the latest state is in the middleware, we actually
+      // dispatch an action that will be intercepted and returned.
+      let currentRenderHasSubscription = false
+      if (queryCacheKey && requestId) {
+        // This _should_ return a boolean, even if the types don't line up
+        const returnedValue = dispatch(
+          api.internalActions.internal_probeSubscription({
+            queryCacheKey,
+            requestId,
+          })
+        )
+
+        if (process.env.NODE_ENV !== 'production') {
+          if (typeof returnedValue !== 'boolean') {
+            throw new Error(
+              `Warning: Middleware for RTK-Query API at reducerPath "${api.reducerPath}" has not been added to the store.
+    You must add the middleware for RTK-Query to function correctly!`
+            )
+          }
+        }
+
+        currentRenderHasSubscription = !!returnedValue
+      }
+
+      const subscriptionRemoved =
+        !currentRenderHasSubscription && lastRenderHadSubscription.current
+
+      usePossiblyImmediateEffect(() => {
+        lastRenderHadSubscription.current = currentRenderHasSubscription
+      })
+
+      usePossiblyImmediateEffect((): void | undefined => {
+        if (subscriptionRemoved) {
+          promiseRef.current = undefined
+        }
+      }, [subscriptionRemoved])
+
+      usePossiblyImmediateEffect((): void | undefined => {
         const lastPromise = promiseRef.current
+        if (
+          typeof process !== 'undefined' &&
+          process.env.NODE_ENV === 'removeMeOnCompilation'
+        ) {
+          // this is only present to enforce the rule of hooks to keep `isSubscribed` in the dependency array
+          console.log(subscriptionRemoved)
+        }
 
         if (stableArg === skipToken) {
           lastPromise?.unsubscribe()
@@ -547,6 +650,7 @@ export function buildHooks<Definitions extends EndpointDefinitions>({
               forceRefetch: refetchOnMountOrArgChange,
             })
           )
+
           promiseRef.current = promise
         } else if (stableSubscriptionOptions !== lastSubscriptionOptions) {
           lastPromise.updateSubscriptionOptions(stableSubscriptionOptions)
@@ -557,6 +661,7 @@ export function buildHooks<Definitions extends EndpointDefinitions>({
         refetchOnMountOrArgChange,
         stableArg,
         stableSubscriptionOptions,
+        subscriptionRemoved,
       ])
 
       useEffect(() => {
@@ -571,7 +676,13 @@ export function buildHooks<Definitions extends EndpointDefinitions>({
           /**
            * A method to manually refetch data for the query
            */
-          refetch: () => void promiseRef.current?.refetch(),
+          refetch: () => {
+            if (!promiseRef.current)
+              throw new Error(
+                'Cannot refetch a query that has not been started yet.'
+              )
+            return promiseRef.current?.refetch()
+          },
         }),
         []
       )
