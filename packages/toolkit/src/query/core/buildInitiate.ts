@@ -203,11 +203,10 @@ export function buildInitiate({
   api: Api<any, EndpointDefinitions, any, any>
   context: ApiContext<EndpointDefinitions>
 }) {
-  
   const runningQueries: Map<
     Dispatch,
     Record<string, QueryActionCreatorResult<any> | undefined>
-    > = new Map()
+  > = new Map()
 
   const {
     unsubscribeQueryResult,
@@ -216,25 +215,17 @@ export function buildInitiate({
   } = api.internalActions
   return { buildInitiateQuery, buildInitiateMutation }
 
-  function middlewareWarning(dispatch: Dispatch) {
+  function middlewareWarning(getState: () => RootState<{}, string, string>) {
     if (process.env.NODE_ENV !== 'production') {
       if ((middlewareWarning as any).triggered) return
-      const registered:
-        | ReturnType<typeof api.internalActions.internal_probeSubscription>
-        | boolean = dispatch(
-        api.internalActions.internal_probeSubscription({
-          queryCacheKey: 'DOES_NOT_EXIST',
-          requestId: 'DUMMY_REQUEST_ID',
-        })
-      )
-
-      ;(middlewareWarning as any).triggered = true
-
-      // The RTKQ middleware _should_ always return a boolean for `probeSubscription`
-      if (typeof registered !== 'boolean') {
-        // Otherwise, must not have been added
-        throw new Error(
-          `Warning: Middleware for RTK-Query API at reducerPath "${api.reducerPath}" has not been added to the store.
+      const registered =
+        getState()[api.reducerPath]?.config?.middlewareRegistered
+      if (registered !== undefined) {
+        ;(middlewareWarning as any).triggered = true
+      }
+      if (registered === false) {
+        console.warn(
+          `Patched RTK Warning: Middleware for RTK-Query API at reducerPath "${api.reducerPath}" has not been added to the store.
 You must add the middleware for RTK-Query to function correctly!`
         )
       }
@@ -260,7 +251,7 @@ You must add the middleware for RTK-Query to function correctly!`
           queryArgs: arg,
           endpointDefinition,
           endpointName,
-        });
+        })
 
         const thunk = queryThunk({
           type: 'query',
@@ -279,7 +270,7 @@ You must add the middleware for RTK-Query to function correctly!`
         const thunkResult = dispatch(thunk)
         const stateAfter = selector(getState())
 
-        middlewareWarning(dispatch)
+        middlewareWarning(getState)
 
         const { requestId, abort } = thunkResult
 

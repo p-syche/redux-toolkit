@@ -473,7 +473,6 @@ In the case of an unhandled error, no tags will be "provided" or "invalidated".`
     },
     condition(queryThunkArgs, { getState }) {
       const state = getState()
-      console.log('patched package')
       const requestState =
         state[reducerPath]?.queries?.[queryThunkArgs.queryCacheKey]
       const fulfilledVal = requestState?.fulfilledTimeStamp
